@@ -166,6 +166,12 @@ class Main{
                         for(File subFile : f.listFiles()) fileQueue.addLast(subFile);
                     }
                 } else {
+                    if(!f.exists()){
+                        System.out.println("Hmmm, this file seems to no longer exist:");
+                        System.out.println("[" + f + "]");
+                        System.out.println();
+                        continue;
+                    }
                     String codec = null;
                     String codecLong = null;
                     {
@@ -178,6 +184,7 @@ class Main{
                         if(exitCode != 0){
                             System.out.println("Got error when attempting to FFPROBE the file:");
                             System.out.println("[" + f + "]");
+                            System.out.println();
                             continue;
                         }
                         Scanner scan = new Scanner(ffprobe.getInputStream());
@@ -192,8 +199,8 @@ class Main{
                         System.out.println("[" + f + "]");
                         System.out.println("This seems to be \"" + codecLong + "\" instead.");
                     }
+                    System.out.println();
                 }
-                System.out.println();
             }
         } else {
             {
