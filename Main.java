@@ -4,7 +4,7 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 
 class Main{
-    private static String[] filters = {"0", "1", "2", "3", "4", "m", "e", "p", "b"};
+    private static final String[] filters = {"0", "1", "2", "3", "4", "m", "e", "p", "b"};
 
     private static int processImage(File inputFile) throws Exception{
         FFprober.fetch(inputFile, "width", "height", "pix_fmt");
@@ -149,12 +149,14 @@ class Main{
         if(inputFile.isDirectory()){
             ArrayDeque<File> fileQueue = new ArrayDeque<File>();
             for(File f : inputFile.listFiles()) fileQueue.addLast(f);
+            boolean lineBreak = false;
             while(!fileQueue.isEmpty()){
                 File f = fileQueue.removeFirst().getCanonicalFile();
                 if(!f.exists()){
+                    if(lineBreak) System.out.println();
                     System.out.println("Hmmm, this file seems to no longer exist:");
                     System.out.println("[" + f + "]");
-                    System.out.println();
+                    lineBreak = true;
                     continue;
                 }
                 if(f.isDirectory()){
@@ -162,11 +164,12 @@ class Main{
                         for(File subFile : f.listFiles()) fileQueue.addLast(subFile);
                     }
                 } else {
+                    if(lineBreak) System.out.println();
                     FFprober.fetch(f, "codec_name", "codec_long_name");
                     if(FFprober.exitCode() != 0){
                         System.out.println("Got error when attempting to FFPROBE the file:");
                         System.out.println("[" + f + "]");
-                        System.out.println();
+                        lineBreak = true;
                         continue;
                     }
                     String codec = FFprober.results()[0];
@@ -178,7 +181,7 @@ class Main{
                         System.out.println("[" + f + "]");
                         System.out.println("This seems to be \"" + codecLong + "\" instead.");
                     }
-                    System.out.println();
+                    lineBreak = true;
                 }
             }
         } else {
