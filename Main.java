@@ -1,32 +1,18 @@
 import java.io.File;
 import java.nio.file.*;
-import java.util.ArrayDeque;
-import java.util.Arrays;
-import java.util.Scanner;
+import java.util.*;
 
 class Main{
     private static int processImage(File inputFile) throws Exception{
-        int width = 0;
-        int height = 0;
-        String originalPixFmt = null;
-        {
-            ProcessBuilder builder = new ProcessBuilder("ffprobe", "-hide_banner", "-v", "error", "-show_entries",
-                "stream=width,height,pix_fmt", "-of", "default=noprint_wrappers=1", inputFile.getName());
-            builder.directory(inputFile.getParentFile());
-            builder.redirectError(ProcessBuilder.Redirect.DISCARD);
-            Process ffprobe = builder.start();
-            int exitCode =  ffprobe.waitFor();
-            if(exitCode != 0){
-                System.out.println("Got error when attempting to FFPROBE the file:");
-                System.out.println("[" + inputFile + "]");
-                return exitCode;
-            }
-            Scanner scan = new Scanner(ffprobe.getInputStream());
-            width = Integer.parseInt(scan.nextLine().split("[=]")[1]);
-            height = Integer.parseInt(scan.nextLine().split("[=]")[1]);
-            originalPixFmt = scan.nextLine().split("[=]")[1];
-            scan.close();
+        FFprober.fetch(inputFile, "width", "height", "pix_fmt");
+        if(FFprober.exitCode() != 0){
+            System.out.println("Got error when attempting to FFPROBE the file:");
+            System.out.println("[" + inputFile + "]");
+            return FFprober.exitCode();
         }
+        int width = Integer.parseInt(FFprober.results()[0]);
+        int height = Integer.parseInt(FFprober.results()[1]);
+        String originalPixFmt = FFprober.results()[2];
         System.out.println("File: " + inputFile);
         System.out.println("Resolution: " + width + "x" + height);
         long originalSize = inputFile.length();
@@ -58,14 +44,14 @@ class Main{
         }
         File bestResult = null;
         {
-            File[] results = outputDir.listFiles();
-            File saved = results[0];
-            for(File f : results){
-                if(f.length() < saved.length()) saved = f;
+            long[] sizes = Arrays.stream(outputDir.listFiles()).mapToLong(File::length).sorted().distinct().toArray();
+            for(File f : outputDir.listFiles()){
+                if(f.length() == sizes[0]){
+                    bestResult = f.getCanonicalFile();
+                    break;
+                }
             }
-            bestResult = saved.getCanonicalFile();
-            long count = Arrays.stream(results).mapToLong(f -> f.length()).distinct().count();
-            if(count == 1){
+            if(sizes.length == 1){
                 System.out.println("None made a difference.");
             } else {
                 System.out.println("Best result was " + bestResult.getName().split("[.]")[0] + ".");
@@ -100,23 +86,13 @@ class Main{
         } else{
             System.out.println("No change on Oxi step.");
         }
-        String afterPixFmt = null;
-        {
-            ProcessBuilder builder = new ProcessBuilder("ffprobe", "-hide_banner", "-v", "error", "-show_entries",
-                "stream=pix_fmt", "-of", "default=noprint_wrappers=1", bestResult.getName());
-            builder.directory(outputDir);
-            builder.redirectError(ProcessBuilder.Redirect.DISCARD);
-            Process ffprobe = builder.start();
-            int exitCode =  ffprobe.waitFor();
-            if(exitCode != 0){
-                System.out.println("Got error when attempting to FFPROBE the file:");
-                System.out.println("[" + bestResult + "]");
-                return exitCode;
-            }
-            Scanner scan = new Scanner(ffprobe.getInputStream());
-            afterPixFmt = scan.nextLine().split("[=]")[1];
-            scan.close();
+        FFprober.fetch(bestResult, "pix_fmt");
+        if(FFprober.exitCode() != 0){
+            System.out.println("Got error when attempting to FFPROBE the file:");
+            System.out.println("[" + bestResult + "]");
+            return FFprober.exitCode();
         }
+        String afterPixFmt = FFprober.results()[0];
         if(originalPixFmt.equals(afterPixFmt)){
             System.out.println("Pixel format remains " + originalPixFmt + ".");
         } else {
@@ -161,37 +137,26 @@ class Main{
             for(File f : inputFile.listFiles()) fileQueue.addLast(f);
             while(!fileQueue.isEmpty()){
                 File f = fileQueue.removeFirst().getCanonicalFile();
+                if(!f.exists()){
+                    System.out.println("Hmmm, this file seems to no longer exist:");
+                    System.out.println("[" + f + "]");
+                    System.out.println();
+                    continue;
+                }
                 if(f.isDirectory()){
                     if(f.getName().charAt(0) != '.'){
                         for(File subFile : f.listFiles()) fileQueue.addLast(subFile);
                     }
                 } else {
-                    if(!f.exists()){
-                        System.out.println("Hmmm, this file seems to no longer exist:");
+                    FFprober.fetch(f, "codec_name", "codec_long_name");
+                    if(FFprober.exitCode() != 0){
+                        System.out.println("Got error when attempting to FFPROBE the file:");
                         System.out.println("[" + f + "]");
                         System.out.println();
                         continue;
                     }
-                    String codec = null;
-                    String codecLong = null;
-                    {
-                        ProcessBuilder builder = new ProcessBuilder("ffprobe", "-hide_banner", "-v", "error", "-show_entries",
-                        "stream=codec_name,codec_long_name", "-of", "default=noprint_wrappers=1", f.getName());
-                        builder.directory(f.getParentFile());
-                        builder.redirectError(ProcessBuilder.Redirect.DISCARD);
-                        Process ffprobe = builder.start();
-                        int exitCode =  ffprobe.waitFor();
-                        if(exitCode != 0){
-                            System.out.println("Got error when attempting to FFPROBE the file:");
-                            System.out.println("[" + f + "]");
-                            System.out.println();
-                            continue;
-                        }
-                        Scanner scan = new Scanner(ffprobe.getInputStream());
-                        codec = scan.nextLine().split("[=]")[1];
-                        codecLong = scan.nextLine().split("[=]")[1];
-                        scan.close();
-                    }
+                    String codec = FFprober.results()[0];
+                    String codecLong = FFprober.results()[1];
                     if(codec.equals("png")){
                         processImage(f);
                     } else {
@@ -203,28 +168,19 @@ class Main{
                 }
             }
         } else {
-            {
-                ProcessBuilder builder = new ProcessBuilder("ffprobe", "-hide_banner", "-v", "error", "-show_entries",
-                    "stream=codec_name,codec_long_name", "-of", "default=noprint_wrappers=1", inputFile.getName());
-                builder.directory(inputFile.getParentFile());
-                builder.redirectError(ProcessBuilder.Redirect.DISCARD);
-                Process ffprobe = builder.start();
-                int exitCode =  ffprobe.waitFor();
-                if(exitCode != 0){
-                    System.out.println("Got error when attempting to FFPROBE the file:");
-                    System.out.println("[" + inputFile + "]");
-                    System.exit(exitCode);
-                }
-                Scanner scan = new Scanner(ffprobe.getInputStream());
-                String codec = scan.nextLine().split("[=]")[1];
-                String codecLong = scan.nextLine().split("[=]")[1];
-                scan.close();
-                if(!codec.equals("png")){
-                    System.out.println("FFPROBE reports that this file is not a PNG:");
-                    System.out.println("[" + inputFile + "]");
-                    System.out.println("This seems to be \"" + codecLong + "\" instead.");
-                    System.exit(1);
-                }
+            FFprober.fetch(inputFile, "codec_name", "codec_long_name");
+            if(FFprober.exitCode() != 0){
+                System.out.println("Got error when attempting to FFPROBE the file:");
+                System.out.println("[" + inputFile + "]");
+                System.exit(FFprober.exitCode());
+            }
+            String codec = FFprober.results()[0];
+            String codecLong = FFprober.results()[1];
+            if(!codec.equals("png")){
+                System.out.println("FFPROBE reports that this file is not a PNG:");
+                System.out.println("[" + inputFile + "]");
+                System.out.println("This seems to be \"" + codecLong + "\" instead.");
+                System.exit(1);
             }
             int exitCode = processImage(inputFile);
             if(exitCode == 0){

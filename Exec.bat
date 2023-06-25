@@ -1,6 +1,6 @@
 @echo off
 pushd "%~dp0"
-javac Main.java && goto loop
+javac *.java && goto loop
 goto end
 :loop
 if not exist "%~1" goto end
