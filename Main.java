@@ -1,8 +1,11 @@
 import java.io.File;
 import java.nio.file.*;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 
 class Main{
+    private static String[] filters = {"0", "1", "2", "3", "4", "m", "e", "p", "b"};
+
     private static int processImage(File inputFile) throws Exception{
         FFprober.fetch(inputFile, "width", "height", "pix_fmt");
         if(FFprober.exitCode() != 0){
@@ -18,23 +21,33 @@ class Main{
         long originalSize = inputFile.length();
         File outputDir = new File("workDir").getCanonicalFile();
         outputDir.mkdir();
-        String[] filters = {"0", "1", "2", "3", "4", "m", "e", "p", "b"};
-        Process[] procs = new Process[filters.length];
-        for(int i=0; i<filters.length; i++){
-            ProcessBuilder builder = new ProcessBuilder("zopflipng", "--iterations=15", "--filters="+filters[i],
-                "--lossy_transparent", "-y", inputFile.getCanonicalPath(), filters[i]+".png");
-            builder.directory(outputDir);
-            builder.redirectError(ProcessBuilder.Redirect.DISCARD);
-            builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
-            procs[i] = builder.start();
-        }
         System.out.print("ZopfliPNG: ");
         System.out.flush();
-        System.gc();
-        for(int i=0; i<filters.length; i++){
-            procs[i].waitFor();
-            System.out.print(filters[i]);
-            System.out.flush();
+        {
+            CompletableFuture<?>[] asyncs = new CompletableFuture<?>[filters.length];
+            HashMap<Long, String> ids = new HashMap<>(filters.length,1.0f);
+            for(int i=0; i<filters.length; i++){
+                ProcessBuilder builder = new ProcessBuilder("zopflipng", "--iterations=15", "--filters="+filters[i],
+                    "--lossy_transparent", "-y", inputFile.getCanonicalPath(), filters[i]+".png");
+                builder.directory(outputDir);
+                builder.redirectError(ProcessBuilder.Redirect.DISCARD);
+                builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+                Process proc = builder.start();
+                synchronized(ids){
+                    ids.put(proc.pid(), filters[i]);
+                }
+                asyncs[i] = proc.onExit().thenAcceptAsync(p -> {
+                    String id = null;
+                    synchronized(ids){
+                        id = ids.get(p.pid());
+                    }
+                    synchronized(System.out){
+                        System.out.print(id);
+                        System.out.flush();
+                    }
+                });
+            }
+            for(CompletableFuture<?> cf : asyncs) cf.get();
         }
         System.out.println(" - Done.");
         if(outputDir.listFiles().length == 0){
@@ -117,6 +130,7 @@ class Main{
         outputDir.delete();
         return 0;
     }
+
     public static void main(String[] args) throws Exception{
         File inputFile = null;
         {
