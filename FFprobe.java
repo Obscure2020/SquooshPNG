@@ -1,11 +1,11 @@
 import java.io.*;
 import java.util.Scanner;
 
-public class FFprober {
-    private static int exitCode = Integer.MIN_VALUE;
-    private static String[] results = null;
+public class FFprobe {
+    private final int exitCode;
+    private final String[] results;
 
-    public static void fetch(File target, String ... values) throws Exception{
+    public FFprobe(File target, String ... values) throws Exception{
         StringBuilder sb = new StringBuilder("stream=");
         for(int i=0; i<values.length; i++){
             sb.append(values[i]);
@@ -15,8 +15,8 @@ public class FFprober {
             sb.toString(), "-of", "default=noprint_wrappers=1", target.getName());
         builder.directory(target.getParentFile());
         builder.redirectError(ProcessBuilder.Redirect.DISCARD);
-        Process ffprobe = builder.start();
-        exitCode = ffprobe.waitFor();
+        Process ffprobe = builder.start().onExit().get();
+        exitCode = ffprobe.exitValue();
         if(exitCode != 0){
             results = new String[0];
             return;
@@ -30,11 +30,11 @@ public class FFprober {
         scan.close();
     }
 
-    public static String[] results(){
+    public String[] results(){
         return results;
     }
 
-    public static int exitCode(){
+    public int exitCode(){
         return exitCode;
     }
 }

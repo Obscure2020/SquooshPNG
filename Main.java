@@ -6,125 +6,233 @@ import java.util.concurrent.CompletableFuture;
 class Main{
     private static final String[] filters = {"0", "1", "2", "3", "4", "m", "e", "p", "b"};
 
-    private static int processImage(File inputFile) throws Exception{
-        FFprober.fetch(inputFile, "width", "height", "pix_fmt");
-        if(FFprober.exitCode() != 0){
-            System.out.println("Got error when attempting to FFPROBE the file:");
-            System.out.println("[" + inputFile + "]");
-            return FFprober.exitCode();
-        }
-        int width = Integer.parseInt(FFprober.results()[0]);
-        int height = Integer.parseInt(FFprober.results()[1]);
-        String originalPixFmt = FFprober.results()[2];
-        System.out.println("File: " + inputFile);
-        System.out.println("Resolution: " + width + "x" + height);
-        long originalSize = inputFile.length();
-        File outputDir = new File("workDir").getCanonicalFile();
-        outputDir.mkdir();
-        System.out.print("ZopfliPNG: ");
+    private static File zopfliPNG(File inputFile, MinRuns mr) throws Exception{
+        System.out.print(mr.initialReport());
         System.out.flush();
-        {
-            CompletableFuture<?>[] asyncs = new CompletableFuture<?>[filters.length];
-            HashMap<Long, String> ids = new HashMap<>(filters.length,1.0f);
+        CompletableFuture<?>[] asyncs = new CompletableFuture<?>[filters.length];
+        HashMap<Long, String> ids = new HashMap<>(filters.length,1.0f);
+        File outputDir = inputFile.getParentFile();
+        synchronized(ids){
             for(int i=0; i<filters.length; i++){
                 ProcessBuilder builder = new ProcessBuilder("zopflipng", "--iterations=15", "--filters="+filters[i],
-                    "--lossy_transparent", "-y", inputFile.getCanonicalPath(), filters[i]+".png");
+                    "-y", inputFile.getName(), filters[i]+".png");
                 builder.directory(outputDir);
                 builder.redirectError(ProcessBuilder.Redirect.DISCARD);
                 builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
                 Process proc = builder.start();
-                synchronized(ids){
-                    ids.put(proc.pid(), filters[i]);
-                }
+                ids.put(proc.pid(), filters[i]);
                 asyncs[i] = proc.onExit().thenAcceptAsync(p -> {
                     String id = null;
                     synchronized(ids){
                         id = ids.get(p.pid());
                     }
-                    synchronized(System.out){
-                        System.out.print(id);
+                    File result = new File(outputDir, id+".png");
+                    long resultSize = result.exists() ? result.length() : Long.MAX_VALUE;
+                    synchronized(mr){
+                        System.out.print(mr.update(id, resultSize, true));
                         System.out.flush();
                     }
                 });
             }
-            for(CompletableFuture<?> cf : asyncs) cf.get();
         }
-        System.out.println(" - Done.");
-        if(outputDir.listFiles().length == 0){
-            System.out.println("Error. Work directory empty.");
-            outputDir.delete();
-            return 1;
+        for(CompletableFuture<?> cf : asyncs) cf.get();
+        //Determine Final Result
+        File finalResult = inputFile;
+        HashSet<Long> sizeSet = new HashSet<>();
+        for(int i=filters.length-1; i>=0; i--){ //We favor things earlier in the list by overwriting later items.
+            File f = new File(outputDir, filters[i]+".png");
+            if(!f.exists()) continue;
+            long len = f.length();
+            sizeSet.add(len);
+            if(len == mr.finalBest()) finalResult = f;
         }
-        File bestResult = null;
+        if(mr.victory()){
+            String finalVerdict = "Best filter: " + finalResult.getName().split("[.]")[0];
+            if(sizeSet.size() <= 1){
+                finalVerdict = "None made a difference.";
+            }
+            if(finalResult.getCanonicalFile().equals(inputFile.getCanonicalFile())){ //If finalResult was never overwritten...
+                finalVerdict = "No files output. Falling back to previous stage.";
+            }
+            System.out.println(mr.finalReport(true) + " " + finalVerdict);
+        } else {
+            System.out.println(mr.finalReport(true));
+        }
+        return finalResult;
+    }
+
+    private static int processImage(File inputFile) throws Exception{
+        long originalSize = inputFile.length(), bestSize = originalSize;
+        int width = 0, height = 0;
+        String originalPixFmt = "";
         {
-            long[] sizes = Arrays.stream(outputDir.listFiles()).mapToLong(File::length).sorted().distinct().toArray();
-            for(File f : outputDir.listFiles()){
-                if(f.length() == sizes[0]){
-                    bestResult = f.getCanonicalFile();
-                    break;
+            FFprobe initalInfo = new FFprobe(inputFile, "width", "height", "pix_fmt");
+            int exitCode = initalInfo.exitCode();
+            if(exitCode != 0){
+                System.out.println("Got error when attempting to FFPROBE the file:");
+                System.out.println("[" + inputFile + "]");
+                return exitCode;
+            }
+            String[] results = initalInfo.results();
+            width = Integer.parseInt(results[0]);
+            height = Integer.parseInt(results[1]);
+            originalPixFmt = results[2];
+        }
+        System.out.println("[" + inputFile + "] - " + width + "x" + height + " - " + originalPixFmt);
+        File outputDir = new File("workDir").getCanonicalFile();
+        outputDir.mkdir();
+
+        //FFMPEG File Normalization
+        System.out.print("FFMPEG: ");
+        System.out.flush();
+        File bestFile = new File(outputDir, "source.png");
+        {
+            ProcessBuilder builder = new ProcessBuilder("ffmpeg", "-hide_banner", "-i", inputFile.getCanonicalPath(),
+                "-map_metadata", "-1", "-c", "png", "-update", "1", "source.png");
+            builder.directory(outputDir);
+            builder.redirectError(ProcessBuilder.Redirect.DISCARD);
+            builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+            builder.start().onExit().get();
+            if(!bestFile.exists()){
+                System.out.println("Error. Work directory empty.");
+                outputDir.delete();
+                return 1;
+            }
+            long ffmpegSize = bestFile.length();
+            if(ffmpegSize < bestSize){
+                long diff = bestSize - ffmpegSize;
+                System.out.println("Done. Removed " + diff + " bytes!");
+                bestSize = ffmpegSize;
+            } else {
+                System.out.println("Done.");
+            }
+        }
+
+        //OxiPNG Initial Runs
+        boolean oxiHelped = false;
+        {
+            MinRuns mr = new MinRuns("Oxi", bestSize);
+            System.out.print(mr.initialReport());
+            System.out.flush();
+            // First pass: With NX
+            ProcessBuilder builder = new ProcessBuilder("oxipng", "-o", "max", "--zc", "12", "-i", "0", "--nx", "source.png");
+            builder.directory(outputDir);
+            builder.redirectError(ProcessBuilder.Redirect.DISCARD);
+            builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+            builder.start().onExit().get();
+            System.out.print(mr.update("1", bestFile.length(), true));
+            System.out.flush();
+            //Second pass: Without NX
+            builder = new ProcessBuilder("oxipng", "-o", "max", "--zc", "12", "-i", "0", "source.png");
+            builder.directory(outputDir);
+            builder.redirectError(ProcessBuilder.Redirect.DISCARD);
+            builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+            builder.start().onExit().get();
+            System.out.print(mr.update("2", bestFile.length(), true));
+            System.out.flush();
+            //Third pass: With A
+            //TODO: Figure out how to QUICKLY AND ACCURATELY check when this pass isn't necessary and skip it.
+            builder = new ProcessBuilder("oxipng", "-o", "max", "--zc", "12", "-i", "0", "-a", "source.png");
+            builder.directory(outputDir);
+            builder.redirectError(ProcessBuilder.Redirect.DISCARD);
+            builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+            builder.start().onExit().get();
+            mr.update("3", bestFile.length(), false);
+            System.out.println(mr.finalReport(true));
+            oxiHelped = mr.finalBest() < bestSize;
+            bestSize = mr.finalBest();
+        }
+
+        //Zopflipng Initial Run (although extremely likely to be the only run)
+        boolean zopfliHelped = false;
+        {
+            MinRuns mr = new MinRuns("ZopfliPNG", bestSize);
+            File newBestFile = zopfliPNG(bestFile, mr);
+            zopfliHelped = mr.finalBest() < bestSize;
+            bestSize = mr.finalBest();
+            File movedBestFile = new File(outputDir, "victor-" + newBestFile.getName());
+            Files.move(newBestFile.toPath(), movedBestFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            if(movedBestFile.exists()){
+                bestFile = movedBestFile;
+            } else {
+                System.out.println("Huh, strange error. Couldn't rename file. Falling back to Oxi result.");
+            }
+        }
+        for(File f : outputDir.listFiles()){
+            if(!f.getCanonicalFile().equals(bestFile.getCanonicalFile())) f.delete();
+        }
+
+        //Further Re-Runs (if necessary)
+        if(oxiHelped && zopfliHelped){
+            while(true){
+                // Oxi Re-Run
+                {
+                    MinRuns mr = new MinRuns("Oxi", bestSize);
+                    System.out.print(mr.initialReport());
+                    System.out.flush();
+                    // First pass: With NX
+                    ProcessBuilder builder = new ProcessBuilder("oxipng", "-o", "max", "--zc", "12", "--nx", bestFile.getName());
+                    builder.directory(outputDir);
+                    builder.redirectError(ProcessBuilder.Redirect.DISCARD);
+                    builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+                    builder.start().onExit().get();
+                    System.out.print(mr.update("1", bestFile.length(), true));
+                    System.out.flush();
+                    //Second pass: Without NX
+                    builder = new ProcessBuilder("oxipng", "-o", "max", "--zc", "12", bestFile.getName());
+                    builder.directory(outputDir);
+                    builder.redirectError(ProcessBuilder.Redirect.DISCARD);
+                    builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+                    builder.start().onExit().get();
+                    mr.update("2", bestFile.length(), true);
+                    System.out.println(mr.finalReport(true));
+                    boolean oxiHelpedAgain = false;
+                    oxiHelpedAgain = mr.finalBest() < bestSize;
+                    bestSize = mr.finalBest();
+                    if(!oxiHelpedAgain) break;
+                }
+                //Zopfli Re-Run
+                {
+                    MinRuns mr = new MinRuns("ZopfliPNG", bestSize);
+                    File newBestFile = zopfliPNG(bestFile, mr);
+                    boolean zopfliHelpedAgain = mr.finalBest() < bestSize;
+                    bestSize = mr.finalBest();
+                    File movedBestFile = new File(outputDir, "again-" + newBestFile.getName());
+                    Files.move(newBestFile.toPath(), movedBestFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                    if(movedBestFile.exists()){
+                        bestFile = movedBestFile;
+                    } else {
+                        System.out.println("Huh, strange error. Couldn't rename file. Falling back to most recent Oxi result.");
+                    }
+                    if(!zopfliHelpedAgain) break;
                 }
             }
-            if(sizes.length == 1){
-                System.out.println("None made a difference.");
+        }
+
+        //Final Report
+        if(bestSize < originalSize){ //Success!
+            FFprobe finalInfo = new FFprobe(bestFile, "pix_fmt");
+            int exitCode = finalInfo.exitCode();
+            if(exitCode != 0){
+                System.out.println("Well, that's odd. FFPROBE failed on the result. Hopefully it's still good?");
             } else {
-                System.out.println("Best result was " + bestResult.getName().split("[.]")[0] + ".");
+                String finalPixFmt = finalInfo.results()[0];
+                if(originalPixFmt.equals(finalPixFmt)){
+                    System.out.println("Pixel format remains " + originalPixFmt + ".");
+                } else {
+                    System.out.println("Pixel format changed: " + originalPixFmt + " -> " + finalPixFmt + ".");
+                }
             }
-        }
-        long preOxiSize = bestResult.length();
-        {
-            System.out.print("OxiPNG: 1... ");
-            System.out.flush();
-            ProcessBuilder builder = new ProcessBuilder("oxipng", "-o", "max", "--nx", bestResult.getName());
-            builder.directory(outputDir);
-            builder.redirectError(ProcessBuilder.Redirect.DISCARD);
-            builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
-            builder.start().waitFor();
-            System.out.print("2... ");
-            System.out.flush();
-            builder = new ProcessBuilder("oxipng", "-o", "max", bestResult.getName());
-            builder.directory(outputDir);
-            builder.redirectError(ProcessBuilder.Redirect.DISCARD);
-            builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
-            builder.start().waitFor();
-        }
-        System.out.println("Done.");
-        long postOxiSize = bestResult.length();
-        if(preOxiSize > postOxiSize){
-            long diff = preOxiSize - postOxiSize;
-            if(diff == 1){
-                System.out.println("Savings of 1 byte!");
-            } else {
-                System.out.println("Savings of " + diff + " bytes!");
-            }
-        } else{
-            System.out.println("No change on Oxi step.");
-        }
-        FFprober.fetch(bestResult, "pix_fmt");
-        if(FFprober.exitCode() != 0){
-            System.out.println("Got error when attempting to FFPROBE the file:");
-            System.out.println("[" + bestResult + "]");
-            return FFprober.exitCode();
-        }
-        String afterPixFmt = FFprober.results()[0];
-        if(originalPixFmt.equals(afterPixFmt)){
-            System.out.println("Pixel format remains " + originalPixFmt + ".");
-        } else {
-            System.out.println("Pixel format changed: " + originalPixFmt + " -> " + afterPixFmt + ".");
-        }
-        if(postOxiSize > originalSize){
-            System.out.println("File size worsened: " + originalSize + " -> " + postOxiSize + ".");
-            System.out.println("Original file remains untouched.");
-        } else if(postOxiSize == originalSize){
-            System.out.println("File size unchanged: " + originalSize + ".");
-            System.out.println("Original file remains untouched.");
-        } else {
-            double upper = postOxiSize * 100;
+            double upper = bestSize * 100;
             double lower = originalSize;
             double percent = upper / lower;
-            System.out.printf("File size improved: %d -> %d (%.2f%%).", originalSize, postOxiSize, percent);
+            System.out.printf("File size improved: %d -> %d (%.2f%%).", originalSize, bestSize, percent);
             System.out.println();
-            Files.move(bestResult.toPath(), inputFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            Files.move(bestFile.toPath(), inputFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
             System.out.println("File replaced.");
+        } else { //No success...
+            System.out.println("File size unchanged: " + originalSize + ".");
+            System.out.println("Original file remains untouched.");
         }
         for(File f : outputDir.listFiles()) f.delete();
         outputDir.delete();
@@ -165,38 +273,38 @@ class Main{
                     }
                 } else {
                     if(lineBreak) System.out.println();
-                    FFprober.fetch(f, "codec_name", "codec_long_name");
-                    if(FFprober.exitCode() != 0){
+                    FFprobe codecCheck = new FFprobe(f, "codec_name", "codec_long_name");
+                    if(codecCheck.exitCode() != 0){
                         System.out.println("Got error when attempting to FFPROBE the file:");
                         System.out.println("[" + f + "]");
                         lineBreak = true;
                         continue;
                     }
-                    String codec = FFprober.results()[0];
-                    String codecLong = FFprober.results()[1];
+                    String codec = codecCheck.results()[0];
+                    String codecLong = codecCheck.results()[1];
                     if(codec.equals("png")){
                         processImage(f);
                     } else {
                         System.out.println("FFPROBE reports that this file is not a PNG:");
                         System.out.println("[" + f + "]");
-                        System.out.println("This seems to be \"" + codecLong + "\" instead.");
+                        System.out.println("This seems to contain \"" + codecLong + "\" instead.");
                     }
                     lineBreak = true;
                 }
             }
         } else {
-            FFprober.fetch(inputFile, "codec_name", "codec_long_name");
-            if(FFprober.exitCode() != 0){
+            FFprobe codecCheck = new FFprobe(inputFile, "codec_name", "codec_long_name");
+            if(codecCheck.exitCode() != 0){
                 System.out.println("Got error when attempting to FFPROBE the file:");
                 System.out.println("[" + inputFile + "]");
-                System.exit(FFprober.exitCode());
+                System.exit(codecCheck.exitCode());
             }
-            String codec = FFprober.results()[0];
-            String codecLong = FFprober.results()[1];
+            String codec = codecCheck.results()[0];
+            String codecLong = codecCheck.results()[1];
             if(!codec.equals("png")){
                 System.out.println("FFPROBE reports that this file is not a PNG:");
                 System.out.println("[" + inputFile + "]");
-                System.out.println("This seems to be \"" + codecLong + "\" instead.");
+                System.out.println("This seems to contain \"" + codecLong + "\" instead.");
                 System.exit(1);
             }
             int exitCode = processImage(inputFile);
