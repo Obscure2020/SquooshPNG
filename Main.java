@@ -5,6 +5,7 @@ import java.util.concurrent.CompletableFuture;
 
 class Main{
     private static final String[] filters = {"0", "1", "2", "3", "4", "m", "e", "p", "b"};
+    private static final String[] sixteenBitFormats = {"gray16be", "ya16be", "rgb48be", "rgba64be"};
 
     private static File zopfliPNG(File inputFile, MinRuns mr) throws Exception{
         System.out.print(mr.initialReport());
@@ -49,14 +50,14 @@ class Main{
         if(mr.victory()){
             String finalVerdict = "Best filter: " + finalResult.getName().split("[.]")[0];
             if(sizeSet.size() <= 1){
-                finalVerdict = "None made a difference.";
+                finalVerdict = "All filters equally beneficial.";
             }
             if(finalResult.getCanonicalFile().equals(inputFile.getCanonicalFile())){ //If finalResult was never overwritten...
                 finalVerdict = "No files output. Falling back to previous stage.";
             }
             System.out.println(mr.finalReport(true) + " " + finalVerdict);
         } else {
-            System.out.println(mr.finalReport(true));
+            System.out.println(mr.finalReport(true) + " None made a difference.");
         }
         return finalResult;
     }
@@ -87,8 +88,14 @@ class Main{
         System.out.flush();
         File bestFile = new File(outputDir, "source.png");
         {
-            ProcessBuilder builder = new ProcessBuilder("ffmpeg", "-hide_banner", "-i", inputFile.getCanonicalPath(),
-                "-map_metadata", "-1", "-c", "png", "-update", "1", "source.png");
+            ProcessBuilder builder;
+            if(Arrays.asList(sixteenBitFormats).contains(originalPixFmt)){
+                builder = new ProcessBuilder("ffmpeg", "-hide_banner", "-i", inputFile.getCanonicalPath(),
+                    "-c", "png", "-update", "1", "source.png");
+            } else {
+                builder = new ProcessBuilder("ffmpeg", "-hide_banner", "-i", inputFile.getCanonicalPath(),
+                    "-c", "png", "-pix_fmt", "rgba", "-update", "1", "source.png");
+            }
             builder.directory(outputDir);
             builder.redirectError(ProcessBuilder.Redirect.DISCARD);
             builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
@@ -115,7 +122,7 @@ class Main{
             System.out.print(mr.initialReport());
             System.out.flush();
             // First pass: With NX
-            ProcessBuilder builder = new ProcessBuilder("oxipng", "-o", "max", "--zc", "12", "-i", "0", "--nx", "source.png");
+            ProcessBuilder builder = new ProcessBuilder("oxipng", "-o", "max", "-s", "--nx", "source.png");
             builder.directory(outputDir);
             builder.redirectError(ProcessBuilder.Redirect.DISCARD);
             builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
@@ -123,7 +130,7 @@ class Main{
             System.out.print(mr.update("1", bestFile.length(), true));
             System.out.flush();
             //Second pass: Without NX
-            builder = new ProcessBuilder("oxipng", "-o", "max", "--zc", "12", "-i", "0", "source.png");
+            builder = new ProcessBuilder("oxipng", "-o", "max", "-s", "source.png");
             builder.directory(outputDir);
             builder.redirectError(ProcessBuilder.Redirect.DISCARD);
             builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
@@ -132,7 +139,7 @@ class Main{
             System.out.flush();
             //Third pass: With A
             //TODO: Figure out how to QUICKLY AND ACCURATELY check when this pass isn't necessary and skip it.
-            builder = new ProcessBuilder("oxipng", "-o", "max", "--zc", "12", "-i", "0", "-a", "source.png");
+            builder = new ProcessBuilder("oxipng", "-o", "max", "-s", "-a", "source.png");
             builder.directory(outputDir);
             builder.redirectError(ProcessBuilder.Redirect.DISCARD);
             builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
