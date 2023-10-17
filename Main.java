@@ -90,10 +90,10 @@ class Main{
         {
             ProcessBuilder builder;
             if(Arrays.asList(sixteenBitFormats).contains(originalPixFmt)){
-                builder = new ProcessBuilder("ffmpeg", "-hide_banner", "-i", inputFile.getCanonicalPath(),
+                builder = new ProcessBuilder("ffmpeg", "-hide_banner", "-y", "-i", inputFile.getCanonicalPath(),
                     "-c", "png", "-update", "1", "source.png");
             } else {
-                builder = new ProcessBuilder("ffmpeg", "-hide_banner", "-i", inputFile.getCanonicalPath(),
+                builder = new ProcessBuilder("ffmpeg", "-hide_banner", "-y", "-i", inputFile.getCanonicalPath(),
                     "-c", "png", "-pix_fmt", "rgba", "-update", "1", "source.png");
             }
             builder.directory(outputDir);
