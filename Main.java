@@ -116,37 +116,27 @@ class Main{
         }
 
         //OxiPNG Initial Runs
-        boolean oxiHelped = false;
         {
             MinRuns mr = new MinRuns("Oxi", bestSize);
             System.out.print(mr.initialReport());
             System.out.flush();
-            // First pass: With NX
-            ProcessBuilder builder = new ProcessBuilder("oxipng", "-o", "max", "-s", "--nx", "source.png");
+            //First pass: Without A
+            ProcessBuilder builder = new ProcessBuilder("oxipng", "-o", "max", "-s", "source.png");
             builder.directory(outputDir);
             builder.redirectError(ProcessBuilder.Redirect.DISCARD);
             builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
             builder.start().onExit().get();
             System.out.print(mr.update("1", bestFile.length(), true));
             System.out.flush();
-            //Second pass: Without NX
-            builder = new ProcessBuilder("oxipng", "-o", "max", "-s", "source.png");
-            builder.directory(outputDir);
-            builder.redirectError(ProcessBuilder.Redirect.DISCARD);
-            builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
-            builder.start().onExit().get();
-            System.out.print(mr.update("2", bestFile.length(), true));
-            System.out.flush();
-            //Third pass: With A
+            //Second pass: With A
             //TODO: Figure out how to QUICKLY AND ACCURATELY check when this pass isn't necessary and skip it.
             builder = new ProcessBuilder("oxipng", "-o", "max", "-s", "-a", "source.png");
             builder.directory(outputDir);
             builder.redirectError(ProcessBuilder.Redirect.DISCARD);
             builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
             builder.start().onExit().get();
-            mr.update("3", bestFile.length(), false);
+            mr.update("2", bestFile.length(), false);
             System.out.println(mr.finalReport(true));
-            oxiHelped = mr.finalBest() < bestSize;
             bestSize = mr.finalBest();
         }
 
@@ -170,7 +160,7 @@ class Main{
         }
 
         //Further Re-Runs (if necessary)
-        if(oxiHelped && zopfliHelped){
+        if(zopfliHelped){
             while(true){
                 // Oxi Re-Run
                 {
