@@ -2,10 +2,12 @@ import java.io.File;
 import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.awt.image.BufferedImage;
+
+import javax.imageio.ImageIO;
 
 class Main{
     private static final String[] filters = {"0", "1", "2", "3", "4", "m", "e", "p", "b"};
-    private static final String[] sixteenBitFormats = {"gray16be", "ya16be", "rgb48be", "rgba64be"};
 
     private static File zopfliPNG(File inputFile, MinRuns mr) throws Exception{
         System.out.print(mr.initialReport());
@@ -89,12 +91,26 @@ class Main{
         File bestFile = new File(outputDir, "source.png");
         {
             ProcessBuilder builder;
-            if(Arrays.asList(sixteenBitFormats).contains(originalPixFmt)){
-                builder = new ProcessBuilder("ffmpeg", "-hide_banner", "-y", "-i", inputFile.getCanonicalPath(),
+            if(originalPixFmt.equals("monob")){
+                BufferedImage inputBuf = ImageIO.read(inputFile);
+                final int bufWidth = inputBuf.getWidth();
+                final int bufHeight = inputBuf.getHeight();
+                BufferedImage outputBuf = new BufferedImage(bufWidth, bufHeight, BufferedImage.TYPE_INT_ARGB);
+                for(int y=0; y<bufHeight; y++){
+                    for(int x=0; x<bufWidth; x++){
+                        outputBuf.setRGB(x, y, inputBuf.getRGB(x, y));
+                    }
+                }
+                ImageIO.write(outputBuf, "PNG", new File(outputDir, "monoSource.png"));
+                builder = new ProcessBuilder("ffmpeg", "-hide_banner", "-y", "-i", "monoSource.png",
                     "-c", "png", "-update", "1", "source.png");
-            } else {
+            }
+            else if(originalPixFmt.equals("pal8")){
                 builder = new ProcessBuilder("ffmpeg", "-hide_banner", "-y", "-i", inputFile.getCanonicalPath(),
                     "-c", "png", "-pix_fmt", "rgba", "-update", "1", "source.png");
+            } else {
+                builder = new ProcessBuilder("ffmpeg", "-hide_banner", "-y", "-i", inputFile.getCanonicalPath(),
+                    "-c", "png", "-update", "1", "source.png");
             }
             builder.directory(outputDir);
             builder.redirectError(ProcessBuilder.Redirect.DISCARD);
