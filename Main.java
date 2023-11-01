@@ -3,11 +3,11 @@ import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.awt.image.BufferedImage;
-
 import javax.imageio.ImageIO;
 
 class Main{
     private static final String[] filters = {"0", "1", "2", "3", "4", "m", "e", "p", "b"};
+    private static final String[] opaquePixFmts = {"gray", "rgb24", "gray16be", "rgb48be"};
 
     private static File zopfliPNG(File inputFile, MinRuns mr) throws Exception{
         System.out.print(mr.initialReport());
@@ -144,14 +144,15 @@ class Main{
             builder.start().onExit().get();
             System.out.print(mr.update("1", bestFile.length(), true));
             System.out.flush();
-            //Second pass: With A
-            //TODO: Figure out how to QUICKLY AND ACCURATELY check when this pass isn't necessary and skip it.
-            builder = new ProcessBuilder("oxipng", "-o", "max", "-s", "-a", "source.png");
-            builder.directory(outputDir);
-            builder.redirectError(ProcessBuilder.Redirect.DISCARD);
-            builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
-            builder.start().onExit().get();
-            mr.update("2", bestFile.length(), false);
+            if(!Arrays.asList(opaquePixFmts).contains(originalPixFmt)){
+                //Second pass: With A
+                builder = new ProcessBuilder("oxipng", "-o", "max", "-s", "-a", "source.png");
+                builder.directory(outputDir);
+                builder.redirectError(ProcessBuilder.Redirect.DISCARD);
+                builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+                builder.start().onExit().get();
+                mr.update("2", bestFile.length(), false);
+            }
             System.out.println(mr.finalReport(true));
             bestSize = mr.finalBest();
         }
