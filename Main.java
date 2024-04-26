@@ -108,7 +108,7 @@ class Main{
         File bestFile = new File(outputDir, "source.png");
         {
             ProcessBuilder builder;
-            if(originalPixFmt.equals("monob")){
+            if(originalPixFmt.equals("monob") && !isOpaque){
                 BufferedImage inputBuf = ImageIO.read(inputFile);
                 final int bufWidth = inputBuf.getWidth();
                 final int bufHeight = inputBuf.getHeight();
