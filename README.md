@@ -4,4 +4,4 @@ A project for automating the supercompression of `.png` images using a combinati
 System Dependencies:
 - FFMPEG
 - ZopfliPNG
-- OxiPNG version 9.0.0
+- OxiPNG version 9.1.0

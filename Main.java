@@ -7,7 +7,18 @@ import javax.imageio.ImageIO;
 
 class Main{
     private static final String[] filters = {"0", "1", "2", "3", "4", "m", "e", "p", "b"};
-    private static final String[] opaquePixFmts = {"gray", "rgb24", "gray16be", "rgb48be"};
+
+    private static boolean checkOpaque(File inputFile) throws Exception{
+        BufferedImage inputBuf = ImageIO.read(inputFile);
+        int h = inputBuf.getHeight(), w = inputBuf.getWidth();
+        for(int y=0; y<h; y++){
+            for(int x=0; x<w; x++){
+                int alpha = inputBuf.getRGB(x, y) >>> 24;
+                if(alpha != 0xFF) return false;
+            }
+        }
+        return true;
+    }
 
     private static File zopfliPNG(File inputFile, MinRuns mr) throws Exception{
         System.out.print(mr.initialReport());
@@ -65,9 +76,13 @@ class Main{
     }
 
     private static int processImage(File inputFile) throws Exception{
-        long originalSize = inputFile.length(), bestSize = originalSize;
-        int width = 0, height = 0;
-        String originalPixFmt = "";
+        final long originalSize = inputFile.length();
+        long bestSize = originalSize;
+        final int width;
+        final int height;
+        final String originalPixFmt;
+        System.out.print("[" + inputFile + "] - Checking...\r");
+        System.out.flush();
         {
             FFprobe initalInfo = new FFprobe(inputFile, "width", "height", "pix_fmt");
             int exitCode = initalInfo.exitCode();
@@ -81,7 +96,8 @@ class Main{
             height = Integer.parseInt(results[1]);
             originalPixFmt = results[2];
         }
-        System.out.println("[" + inputFile + "] - " + width + "x" + height + " - " + originalPixFmt);
+        final boolean isOpaque = checkOpaque(inputFile);
+        System.out.println("[" + inputFile + "] - " + width + "x" + height + " - " + originalPixFmt + " - " + (isOpaque ? "Opaque" : "Has alpha"));
         File outputDir = new File("workDir").getCanonicalFile();
         outputDir.mkdir();
 
@@ -104,8 +120,7 @@ class Main{
                 ImageIO.write(outputBuf, "PNG", new File(outputDir, "monoSource.png"));
                 builder = new ProcessBuilder("ffmpeg", "-hide_banner", "-y", "-i", "monoSource.png",
                     "-c", "png", "-update", "1", "source.png");
-            }
-            else if(originalPixFmt.equals("pal8")){
+            } else if(originalPixFmt.equals("pal8")){
                 builder = new ProcessBuilder("ffmpeg", "-hide_banner", "-y", "-i", inputFile.getCanonicalPath(),
                     "-c", "png", "-pix_fmt", "rgba", "-update", "1", "source.png");
             } else {
@@ -144,7 +159,7 @@ class Main{
             builder.start().onExit().get();
             System.out.print(mr.update("1", bestFile.length(), true));
             System.out.flush();
-            if(!Arrays.asList(opaquePixFmts).contains(originalPixFmt)){
+            if(!isOpaque){
                 //Second pass: With A
                 builder = new ProcessBuilder("oxipng", "-o", "max", "-s", "-a", "source.png");
                 builder.directory(outputDir);
