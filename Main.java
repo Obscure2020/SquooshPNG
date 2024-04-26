@@ -97,6 +97,7 @@ class Main{
             originalPixFmt = results[2];
         }
         final boolean isOpaque = checkOpaque(inputFile);
+        System.gc();
         System.out.println("[" + inputFile + "] - " + width + "x" + height + " - " + originalPixFmt + " - " + (isOpaque ? "Opaque" : "Has alpha"));
         File outputDir = new File("workDir").getCanonicalFile();
         outputDir.mkdir();
